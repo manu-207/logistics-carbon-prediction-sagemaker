@@ -1,0 +1,49 @@
+# SageMaker Pipeline Configuration
+project:
+  name: carbon-emissions
+  description: CO₂ emission prediction for logistics shipments
+
+aws:
+  region: ap-south-1
+  s3_bucket: carbon-emissions-ml  # Change to your bucket
+  s3_prefix: carbon-emissions
+  role_name: SageMakerExecutionRole  # IAM role name
+
+pipeline:
+  name: carbon-emissions-pipeline
+  instance_type_processing: ml.t3.medium
+  instance_type_training: ml.t3.medium
+  instance_type_endpoint: ml.t3.medium
+  instance_count_endpoint: 1
+
+data:
+  raw_path: raw/shipments.csv
+  processed_path: processed/features.csv
+  test_size: 0.2
+  random_state: 42
+
+model:
+  framework: xgboost
+  version: "1.7-1"
+  hyperparameters:
+    max_depth: 7
+    eta: 0.08
+    subsample: 0.85
+    colsample_bytree: 0.85
+    num_round: 300
+    objective: "reg:squarederror"
+    eval_metric: rmse
+    early_stopping_rounds: 15
+    alpha: 0.1
+    lambda: 1.0
+
+evaluation:
+  min_r2_threshold: 0.5  # Minimum R² to register model
+
+emission_factors:
+  surface: 0.062
+  air: 0.602
+
+endpoint:
+  name: carbon-emissions-endpoint
+  model_package_group: carbon-emissions-models
