@@ -108,6 +108,9 @@ def create_pipeline():
         output_path=f"s3://{bucket}/{prefix}/models",
         sagemaker_session=sess,
         hyperparameters=config["model"]["hyperparameters"],
+        use_spot_instances=True,
+        max_wait=3600,
+        max_run=3600,
     )
 
     step_train = TrainingStep(
