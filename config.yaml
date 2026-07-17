@@ -4,7 +4,7 @@ project:
   description: CO₂ emission prediction for logistics shipments
 
 aws:
-  region: ap-south-1
+  region: us-east-1
   s3_bucket: carbon-emissions-ml  # Change to your bucket
   s3_prefix: carbon-emissions
   role_name: SageMakerExecutionRole  # IAM role name
