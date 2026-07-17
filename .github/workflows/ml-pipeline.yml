@@ -1,0 +1,113 @@
+name: ML Pipeline - Train & Register Model
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pipelines/**'
+      - 'inference/**'
+      - 'config.yaml'
+      - 'data/**'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AWS_REGION: ap-south-1
+  S3_BUCKET: carbon-emissions-ml
+  S3_PREFIX: carbon-emissions
+
+jobs:
+  run-pipeline:
+    name: Trigger SageMaker Pipeline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload training data to S3
+        run: |
+          aws s3 sync data/ s3://${{ env.S3_BUCKET }}/${{ env.S3_PREFIX }}/raw/ \
+            --exclude "*" --include "*.csv"
+
+      - name: Run SageMaker Pipeline
+        run: python pipelines/pipeline.py
+
+      - name: Wait for pipeline completion
+        run: |
+          python -c "
+          import boto3, time, sys
+          sys.path.insert(0, '.')
+          from pipelines.config import load_config
+
+          config = load_config()
+          sm = boto3.client('sagemaker', region_name='${AWS_REGION}')
+          pipeline_name = config['pipeline']['name']
+
+          # Get latest execution
+          response = sm.list_pipeline_executions(
+              PipelineName=pipeline_name,
+              SortBy='CreationTime',
+              SortOrder='Descending',
+              MaxResults=1
+          )
+          execution_arn = response['PipelineExecutionSummaries'][0]['PipelineExecutionArn']
+          print(f'Monitoring: {execution_arn}')
+
+          # Poll until complete
+          while True:
+              status = sm.describe_pipeline_execution(
+                  PipelineExecutionArn=execution_arn
+              )['PipelineExecutionStatus']
+              print(f'Status: {status}')
+              if status in ['Succeeded', 'Failed', 'Stopped']:
+                  break
+              time.sleep(60)
+
+          if status != 'Succeeded':
+              print(f'Pipeline failed with status: {status}')
+              sys.exit(1)
+
+          print('Pipeline completed successfully!')
+          "
+
+      - name: Verify model registered
+        run: |
+          python -c "
+          import boto3, sys
+          sys.path.insert(0, '.')
+          from pipelines.config import load_config
+
+          config = load_config()
+          sm = boto3.client('sagemaker', region_name='ap-south-1')
+
+          response = sm.list_model_packages(
+              ModelPackageGroupName=config['endpoint']['model_package_group'],
+              ModelApprovalStatus='PendingManualApproval',
+              SortBy='CreationTime',
+              SortOrder='Descending',
+              MaxResults=1
+          )
+          packages = response.get('ModelPackageSummaryList', [])
+          if packages:
+              print(f'Model registered: {packages[0][\"ModelPackageArn\"]}')
+              print('Waiting for manual approval before deployment.')
+          else:
+              print('No model registered (R² threshold not met).')
+              sys.exit(1)
+          "

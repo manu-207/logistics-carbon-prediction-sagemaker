@@ -1,0 +1,126 @@
+name: Deploy Endpoint
+
+on:
+  workflow_dispatch:  # Manual trigger only (after model approval)
+    inputs:
+      action:
+        description: 'Deploy or destroy endpoint'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - destroy
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  deploy:
+    name: Deploy SageMaker Endpoint
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.action == 'deploy' }}
+    environment: production  # Requires GitHub environment approval
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check for approved model
+        run: |
+          python -c "
+          import boto3, sys
+          sys.path.insert(0, '.')
+          from pipelines.config import load_config
+
+          config = load_config()
+          sm = boto3.client('sagemaker', region_name='ap-south-1')
+
+          response = sm.list_model_packages(
+              ModelPackageGroupName=config['endpoint']['model_package_group'],
+              ModelApprovalStatus='Approved',
+              SortBy='CreationTime',
+              SortOrder='Descending',
+              MaxResults=1
+          )
+          packages = response.get('ModelPackageSummaryList', [])
+          if not packages:
+              print('ERROR: No approved model found. Approve a model first in SageMaker Model Registry.')
+              sys.exit(1)
+          print(f'Deploying model: {packages[0][\"ModelPackageArn\"]}')
+          "
+
+      - name: Deploy endpoint
+        run: python scripts/deploy_endpoint.py
+
+      - name: Verify endpoint is InService
+        run: |
+          python -c "
+          import boto3, time, sys
+          sys.path.insert(0, '.')
+          from pipelines.config import load_config
+
+          config = load_config()
+          sm = boto3.client('sagemaker', region_name='ap-south-1')
+          endpoint_name = config['endpoint']['name']
+
+          print(f'Waiting for endpoint: {endpoint_name}')
+          while True:
+              response = sm.describe_endpoint(EndpointName=endpoint_name)
+              status = response['EndpointStatus']
+              print(f'Status: {status}')
+              if status == 'InService':
+                  print('Endpoint is live!')
+                  break
+              elif status == 'Failed':
+                  print('Endpoint deployment failed!')
+                  sys.exit(1)
+              time.sleep(30)
+          "
+
+      - name: Smoke test endpoint
+        run: python scripts/invoke_endpoint.py
+
+  destroy:
+    name: Destroy SageMaker Endpoint
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.action == 'destroy' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Destroy endpoint
+        run: python scripts/cleanup.py
