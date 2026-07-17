@@ -7,13 +7,10 @@ on:
       - 'pipelines/**'
       - 'inference/**'
       - 'config.yaml'
-      - 'data/**'
   workflow_dispatch:  # Allow manual trigger
 
 env:
   AWS_REGION: ap-south-1
-  S3_BUCKET: carbon-emissions-ml
-  S3_PREFIX: carbon-emissions
 
 jobs:
   run-pipeline:
@@ -40,10 +37,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Upload training data to S3
+      - name: Verify data exists in S3
         run: |
-          aws s3 sync data/ s3://${{ env.S3_BUCKET }}/${{ env.S3_PREFIX }}/raw/ \
-            --exclude "*" --include "*.csv"
+          echo "Checking if training data exists in S3..."
+          aws s3 ls s3://carbon-emissions-ml/carbon-emissions/raw/shipments.csv
+          echo "✅ Data found in S3"
 
       - name: Run SageMaker Pipeline
         run: python pipelines/pipeline.py
@@ -56,7 +54,7 @@ jobs:
           from pipelines.config import load_config
 
           config = load_config()
-          sm = boto3.client('sagemaker', region_name='${AWS_REGION}')
+          sm = boto3.client('sagemaker', region_name='${{ env.AWS_REGION }}')
           pipeline_name = config['pipeline']['name']
 
           # Get latest execution
@@ -83,7 +81,7 @@ jobs:
               print(f'Pipeline failed with status: {status}')
               sys.exit(1)
 
-          print('Pipeline completed successfully!')
+          print('✅ Pipeline completed successfully!')
           "
 
       - name: Verify model registered
@@ -94,7 +92,7 @@ jobs:
           from pipelines.config import load_config
 
           config = load_config()
-          sm = boto3.client('sagemaker', region_name='ap-south-1')
+          sm = boto3.client('sagemaker', region_name='${{ env.AWS_REGION }}')
 
           response = sm.list_model_packages(
               ModelPackageGroupName=config['endpoint']['model_package_group'],
@@ -105,9 +103,13 @@ jobs:
           )
           packages = response.get('ModelPackageSummaryList', [])
           if packages:
-              print(f'Model registered: {packages[0][\"ModelPackageArn\"]}')
-              print('Waiting for manual approval before deployment.')
+              arn = packages[0]['ModelPackageArn']
+              print(f'✅ Model registered: {arn}')
+              print()
+              print('Next steps:')
+              print(f'  1. Approve: aws sagemaker update-model-package --model-package-arn {arn} --model-approval-status Approved')
+              print('  2. Deploy: Trigger the deploy-endpoint workflow')
           else:
-              print('No model registered (R² threshold not met).')
+              print('❌ No model registered (R² threshold not met).')
               sys.exit(1)
           "
