@@ -10,7 +10,7 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 env:
-  AWS_REGION: ap-south-1
+  AWS_REGION: us-east-1
 
 jobs:
   run-pipeline:
@@ -84,6 +84,42 @@ jobs:
               sys.exit(1)
 
           print('✅ Pipeline completed successfully!')
+          "
+
+      - name: Get pipeline failure details
+        if: failure()
+        run: |
+          python -c "
+          import boto3, sys
+          sys.path.insert(0, '.')
+          from pipelines.config import load_config
+
+          config = load_config()
+          sm = boto3.client('sagemaker', region_name='${{ env.AWS_REGION }}')
+          pipeline_name = config['pipeline']['name']
+
+          response = sm.list_pipeline_executions(
+              PipelineName=pipeline_name,
+              SortBy='CreationTime',
+              SortOrder='Descending',
+              MaxResults=1
+          )
+          execution_arn = response['PipelineExecutionSummaries'][0]['PipelineExecutionArn']
+          print(f'Failed execution: {execution_arn}')
+
+          # List all steps and their statuses
+          steps = sm.list_pipeline_execution_steps(
+              PipelineExecutionArn=execution_arn
+          )
+          for step in steps['PipelineExecutionSteps']:
+              status = step['StepStatus']
+              name = step['StepName']
+              print(f'{name}: {status}')
+              if status == 'Failed':
+                  reason = step.get('FailureReason', 'No reason provided')
+                  print(f'  FailureReason: {reason}')
+                  metadata = step.get('Metadata', {})
+                  print(f'  Metadata: {metadata}')
           "
 
       - name: Verify model registered
