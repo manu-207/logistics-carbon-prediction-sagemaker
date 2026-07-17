@@ -12,7 +12,7 @@ aws:
 pipeline:
   name: carbon-emissions-pipeline
   instance_type_processing: ml.t3.medium
-  instance_type_training: ml.t3.medium
+  instance_type_training: ml.c4.xlarge
   instance_type_endpoint: ml.t3.medium
   instance_count_endpoint: 1
 
