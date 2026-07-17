@@ -21,6 +21,7 @@ from sagemaker.workflow.step_collections import RegisterModel
 from sagemaker.workflow.conditions import ConditionGreaterThanOrEqualTo
 from sagemaker.workflow.condition_step import ConditionStep
 from sagemaker.workflow.properties import PropertyFile
+from sagemaker.workflow.functions import JsonGet
 from sagemaker.workflow.parameters import ParameterString, ParameterFloat
 from sagemaker.processing import (
     ScriptProcessor,
@@ -183,7 +184,11 @@ def create_pipeline():
     )
 
     cond_r2 = ConditionGreaterThanOrEqualTo(
-        left=evaluation_report.expr("regression_metrics.r2_score.value", "r2_score"),
+        left=JsonGet(
+            step_name="EvaluateModel",
+            property_file=evaluation_report,
+            json_path="regression_metrics.r2_score.value",
+        ),
         right=min_r2_threshold,
     )
 
