@@ -8,7 +8,6 @@ Usage:
 """
 
 import sys
-import json
 import boto3
 
 sys.path.insert(0, ".")
@@ -23,40 +22,24 @@ def invoke():
 
     runtime = boto3.client("sagemaker-runtime", region_name=region)
 
-    # Sample shipments
+    # Feature order (must match training):
+    # distance_km, log_distance, mode_surface, mode_air,
+    # booking_zone_id, dest_zone_id, is_same_zone,
+    # hour_of_day, day_of_week, is_weekend, month,
+    # route_frequency, weight_tonnes, distance_air_interaction
+
     samples = [
         {
             "name": "Surface: Mumbai → Delhi (1400 km, 3t)",
-            "payload": {
-                "distance_km": 1400.0, "log_distance": 7.24,
-                "mode_surface": 1, "mode_air": 0,
-                "booking_zone_id": 4, "dest_zone_id": 2, "is_same_zone": 0,
-                "hour_of_day": 10, "day_of_week": 1, "is_weekend": 0, "month": 10,
-                "route_frequency": 8, "weight_tonnes": 3.0,
-                "distance_air_interaction": 0.0,
-            },
+            "csv": "1400.0,7.24,1,0,4,2,0,10,1,0,10,8,3.0,0.0",
         },
         {
             "name": "Air: Chennai → Delhi (2100 km, 0.5t)",
-            "payload": {
-                "distance_km": 2100.0, "log_distance": 7.65,
-                "mode_surface": 0, "mode_air": 1,
-                "booking_zone_id": 5, "dest_zone_id": 2, "is_same_zone": 0,
-                "hour_of_day": 6, "day_of_week": 3, "is_weekend": 0, "month": 9,
-                "route_frequency": 3, "weight_tonnes": 0.5,
-                "distance_air_interaction": 2100.0,
-            },
+            "csv": "2100.0,7.65,0,1,5,2,0,6,3,0,9,3,0.5,2100.0",
         },
         {
             "name": "Short surface: Same zone (80 km, 1t)",
-            "payload": {
-                "distance_km": 80.0, "log_distance": 4.39,
-                "mode_surface": 1, "mode_air": 0,
-                "booking_zone_id": 4, "dest_zone_id": 4, "is_same_zone": 1,
-                "hour_of_day": 14, "day_of_week": 5, "is_weekend": 1, "month": 10,
-                "route_frequency": 12, "weight_tonnes": 1.0,
-                "distance_air_interaction": 0.0,
-            },
+            "csv": "80.0,4.39,1,0,4,4,1,14,5,1,10,12,1.0,0.0",
         },
     ]
 
@@ -66,17 +49,17 @@ def invoke():
     for sample in samples:
         response = runtime.invoke_endpoint(
             EndpointName=endpoint_name,
-            ContentType="application/json",
-            Body=json.dumps(sample["payload"]),
+            ContentType="text/csv",
+            Body=sample["csv"],
         )
-        result = json.loads(response["Body"].read().decode())
-        co2_kg = result[0] if isinstance(result, list) else result
+        result = response["Body"].read().decode().strip()
+        co2_kg = float(result)
 
         print(f"\n{sample['name']}")
         print(f"  → CO₂ Prediction: {co2_kg:.2f} kg")
 
     print("\n" + "=" * 60)
-    print("All predictions successful!")
+    print("All predictions successful! ✅")
 
 
 if __name__ == "__main__":
