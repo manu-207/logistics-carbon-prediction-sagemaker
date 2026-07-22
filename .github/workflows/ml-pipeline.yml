@@ -14,7 +14,7 @@ env:
 
 jobs:
   run-pipeline:
-    name: Trigger SageMaker Pipeline
+    name: Train & Register Model
     runs-on: ubuntu-latest
 
     steps:
@@ -45,82 +45,61 @@ jobs:
           aws s3 ls s3://carbon-emissions-ml/carbon-emissions/raw/shipments.csv
           echo "✅ Data found in S3"
 
-      - name: Run SageMaker Pipeline
-        run: python pipelines/pipeline.py
-
-      - name: Wait for pipeline completion
+      - name: Run Preprocessing on SageMaker
         run: |
           python -c "
           import boto3, time, sys
           sys.path.insert(0, '.')
-          from pipelines.config import load_config
+          import sagemaker
+          from sagemaker.processing import ScriptProcessor, ProcessingInput, ProcessingOutput
+          from pipelines.config import load_config, get_role_arn
 
           config = load_config()
-          sm = boto3.client('sagemaker', region_name='${{ env.AWS_REGION }}')
-          pipeline_name = config['pipeline']['name']
+          region = config['aws']['region']
+          bucket = config['aws']['s3_bucket']
+          prefix = config['aws']['s3_prefix']
 
-          # Get latest execution
-          response = sm.list_pipeline_executions(
-              PipelineName=pipeline_name,
-              SortBy='CreationTime',
-              SortOrder='Descending',
-              MaxResults=1
+          sess = sagemaker.Session(boto_session=boto3.Session(region_name=region))
+          role = get_role_arn(config)
+
+          sklearn_processor = ScriptProcessor(
+              command=['python3'],
+              image_uri=sagemaker.image_uris.retrieve('sklearn', region, version='1.2-1'),
+              instance_type=config['pipeline']['instance_type_processing'],
+              instance_count=1,
+              role=role,
+              sagemaker_session=sess,
           )
-          execution_arn = response['PipelineExecutionSummaries'][0]['PipelineExecutionArn']
-          print(f'Monitoring: {execution_arn}')
 
-          # Poll until complete
-          while True:
-              status = sm.describe_pipeline_execution(
-                  PipelineExecutionArn=execution_arn
-              )['PipelineExecutionStatus']
-              print(f'Status: {status}')
-              if status in ['Succeeded', 'Failed', 'Stopped']:
-                  break
-              time.sleep(60)
-
-          if status != 'Succeeded':
-              print(f'Pipeline failed with status: {status}')
-              sys.exit(1)
-
-          print('✅ Pipeline completed successfully!')
+          print('Starting preprocessing job...')
+          sklearn_processor.run(
+              inputs=[
+                  ProcessingInput(
+                      source=f's3://{bucket}/{prefix}/raw/shipments.csv',
+                      destination='/opt/ml/processing/input',
+                  ),
+              ],
+              outputs=[
+                  ProcessingOutput(
+                      output_name='train',
+                      source='/opt/ml/processing/output/train',
+                      destination=f's3://{bucket}/{prefix}/processed/train',
+                  ),
+                  ProcessingOutput(
+                      output_name='test',
+                      source='/opt/ml/processing/output/test',
+                      destination=f's3://{bucket}/{prefix}/processed/test',
+                  ),
+              ],
+              code='pipelines/preprocess.py',
+          )
+          print('✅ Preprocessing completed!')
           "
 
-      - name: Get pipeline failure details
-        if: failure()
-        run: |
-          python -c "
-          import boto3, sys
-          sys.path.insert(0, '.')
-          from pipelines.config import load_config
-
-          config = load_config()
-          sm = boto3.client('sagemaker', region_name='${{ env.AWS_REGION }}')
-          pipeline_name = config['pipeline']['name']
-
-          response = sm.list_pipeline_executions(
-              PipelineName=pipeline_name,
-              SortBy='CreationTime',
-              SortOrder='Descending',
-              MaxResults=1
-          )
-          execution_arn = response['PipelineExecutionSummaries'][0]['PipelineExecutionArn']
-          print(f'Failed execution: {execution_arn}')
-
-          # List all steps and their statuses
-          steps = sm.list_pipeline_execution_steps(
-              PipelineExecutionArn=execution_arn
-          )
-          for step in steps['PipelineExecutionSteps']:
-              status = step['StepStatus']
-              name = step['StepName']
-              print(f'{name}: {status}')
-              if status == 'Failed':
-                  reason = step.get('FailureReason', 'No reason provided')
-                  print(f'  FailureReason: {reason}')
-                  metadata = step.get('Metadata', {})
-                  print(f'  Metadata: {metadata}')
-          "
+      - name: Train model & Register (local)
+        env:
+          SAGEMAKER_SUPPRESS_V2_WARNING: "1"
+        run: python pipelines/train_local.py
 
       - name: Verify model registered
         run: |
