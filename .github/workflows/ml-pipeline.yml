@@ -1,4 +1,4 @@
-name: ML Pipeline - Train & Register Model
+name: ML Pipeline - Train & Register Model prod
 
 on:
   push:
