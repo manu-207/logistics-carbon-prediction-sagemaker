@@ -2,6 +2,7 @@
 deploy_endpoint.py — Deploy approved model to SageMaker real-time endpoint
 ============================================================================
 Fetches the latest approved model from the Model Registry and deploys it.
+If endpoint already exists, updates it (zero-downtime). Otherwise creates new.
 
 Usage:
     python scripts/deploy_endpoint.py
@@ -57,17 +58,36 @@ def deploy():
         sagemaker_session=sess,
     )
 
-    # Deploy
+    # Check if endpoint already exists
+    endpoint_exists = False
+    try:
+        sm_client.describe_endpoint(EndpointName=endpoint_name)
+        endpoint_exists = True
+    except sm_client.exceptions.ClientError:
+        pass
+
     print(f"[deploy] Deploying to endpoint '{endpoint_name}'...")
     print(f"[deploy] Instance: {instance_type} x {instance_count}")
 
-    predictor = model.deploy(
-        initial_instance_count=instance_count,
-        instance_type=instance_type,
-        endpoint_name=endpoint_name,
-    )
+    if endpoint_exists:
+        # Update existing endpoint (zero-downtime blue/green deployment)
+        print("[deploy] Endpoint exists — updating with new model (zero-downtime)...")
+        predictor = model.deploy(
+            initial_instance_count=instance_count,
+            instance_type=instance_type,
+            endpoint_name=endpoint_name,
+            update_endpoint=True,
+        )
+    else:
+        # Create new endpoint
+        print("[deploy] Creating new endpoint...")
+        predictor = model.deploy(
+            initial_instance_count=instance_count,
+            instance_type=instance_type,
+            endpoint_name=endpoint_name,
+        )
 
-    print(f"[deploy] Endpoint '{endpoint_name}' is now live!")
+    print(f"[deploy] ✅ Endpoint '{endpoint_name}' is now live!")
     print(f"[deploy] Test with: python scripts/invoke_endpoint.py")
 
 
